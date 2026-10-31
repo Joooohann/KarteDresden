@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a56db">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Dresden in 4 Tagen</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --tag1: #1a56db;   /* blau  */
+    --tag2: #16a34a;   /* grün  */
+    --tag3: #eab308;   /* gelb  */
+    --tag4: #dc2626;   /* rot   */
+    --ich: #0ea5e9;
+    --bg: #ffffff;
+    --fg: #1b2333;
+    --muted: #5b6577;
+    --flaeche: #eef1f6;
+  }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg); background: var(--bg);
+  }
+  #map { position: fixed; inset: 0; }
+
+  /* ---------- Stationen ---------- */
+  .wp {
+    width: 32px; height: 32px; border-radius: 50%;
+    color: #fff; border: 3px solid #fff; box-sizing: border-box;
+    box-shadow: 0 2px 6px rgba(0,0,0,.35);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums;
+  }
+  .wp.dunkel { color: var(--fg); }               /* Zahl auf Gelb */
+  .wp.start  { width: 38px; height: 38px; font-size: 17px; }
+  .wp.alle {                                      /* Frauenkirche bei "Alle" */
+    border: 0; padding: 4px;
+    background: conic-gradient(var(--tag1) 0 25%, var(--tag2) 0 50%, var(--tag3) 0 75%, var(--tag4) 0);
+  }
+  .wp.alle span {
+    width: 100%; height: 100%; border-radius: 50%; background: #fff; color: var(--fg);
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ---------- Standort ---------- */
+  .ich {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--ich); border: 3px solid #fff; box-sizing: border-box;
+    animation: puls 2s infinite;
+  }
+  @keyframes puls {
+    0%   { box-shadow: 0 0 0 0 rgba(14,165,233,.55); }
+    70%  { box-shadow: 0 0 0 14px rgba(14,165,233,0); }
+    100% { box-shadow: 0 0 0 0 rgba(14,165,233,0); }
+  }
+  @media (prefers-reduced-motion: reduce) { .ich { animation: none; } }
+
+  /* ---------- Infofenster ---------- */
+  .popup .tagzeile {
+    font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; margin: 0 0 2px;
+  }
+  .popup h3 { margin: 0 0 4px; font-size: 16px; }
+  .popup p { margin: 0 0 6px; font-size: 14px; line-height: 1.4; }
+  .popup .klein { color: var(--muted); font-size: 12px; margin: 0; }
+
+  /* ---------- Tagesauswahl oben ---------- */
+  .leiste {
+    position: fixed; left: 12px; right: 12px; z-index: 1000;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    background: var(--bg); border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.2);
+    padding: 8px; box-sizing: border-box;
+    max-width: 560px; margin: 0 auto;
+  }
+  .tage { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  .tage button {
+    border: 0; background: var(--flaeche); color: var(--fg);
+    border-radius: 10px; padding: 8px 2px; cursor: pointer;
+    font-size: 14px; font-weight: 600; white-space: nowrap;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .tage .punkt { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .tage .punkt.alle {
+    background: conic-gradient(var(--tag1) 0 25%, var(--tag2) 0 50%, var(--tag3) 0 75%, var(--tag4) 0);
+  }
+  .tage button[aria-pressed="true"] { background: var(--c, var(--fg)); color: #fff; }
+  .tage button[aria-pressed="true"] .punkt { box-shadow: 0 0 0 2px #fff; }
+  .tage button[data-tag="3"][aria-pressed="true"] { color: var(--fg); }
+  .tage button:focus-visible { outline: 3px solid var(--fg); outline-offset: 1px; }
+
+  .info { padding: 8px 6px 2px; font-size: 13px; line-height: 1.4; }
+  .info .route { font-weight: 600; }
+  .info .status { color: var(--muted); font-size: 12px; margin-top: 1px; }
+
+  /* ---------- Knöpfe unten rechts ---------- */
+  .knoepfe {
+    position: fixed; right: 12px; z-index: 1000;
+    bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .knoepfe button {
+    width: 48px; height: 48px; border-radius: 50%; border: 0;
+    background: var(--bg); color: var(--fg);
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+    font-size: 20px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .knoepfe button:focus-visible { outline: 3px solid var(--tag1); outline-offset: 2px; }
+
+  /* ---------- Auswahl Kartenhintergrund ---------- */
+  .panel {
+    position: fixed; right: 72px; z-index: 1001;
+    bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    width: min(260px, calc(100vw - 100px));
+    background: var(--bg); border-radius: 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.25);
+    padding: 12px; box-sizing: border-box;
+  }
+  .panel-titel {
+    font-size: 11px; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--muted); margin: 0 4px 8px;
+  }
+  .wahl { display: flex; flex-direction: column; gap: 4px; }
+  .wahl button {
+    display: flex; align-items: center; gap: 10px;
+    border: 0; background: transparent; color: var(--fg);
+    padding: 8px; border-radius: 10px; font-size: 15px; text-align: left; cursor: pointer;
+  }
+  .wahl button[aria-pressed="true"] { background: var(--flaeche); font-weight: 600; }
+  .wahl button:focus-visible { outline: 2px solid var(--tag1); }
+  .vorschau { width: 28px; height: 28px; border-radius: 7px; flex: none; border: 1px solid rgba(0,0,0,.15); }
+  .wahl button[aria-pressed="true"] .vorschau { border: 2px solid var(--fg); }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="leiste">
+  <div class="tage" id="tage" role="group" aria-label="Route wählen"></div>
+  <div class="info">
+    <div class="route" id="routeText">–</div>
+    <div class="status" id="status">Standort wird gesucht …</div>
+  </div>
+</div>
+
+<div class="panel" id="panel" hidden>
+  <div class="panel-titel">Kartenhintergrund</div>
+  <div class="wahl" id="wahl"></div>
+</div>
+
+<div class="knoepfe">
+  <button id="btnEbenen" aria-label="Kartenhintergrund wählen" aria-expanded="false" aria-controls="panel" title="Hintergrund">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/></svg>
+  </button>
+  <button id="btnIch" aria-label="Zu meinem Standort" title="Mein Standort">◎</button>
+  <button id="btnRoute" aria-label="Route ganz anzeigen" title="Route anzeigen">⤢</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+  // ==========================================================
+  //  HIER ANPASSEN: Start, Tage, Stationen und Infotexte
+  //  Die Wege sind echte Fußwege aus OpenStreetMap-Daten
+  //  (Fußgänger-Routing von routing.openstreetmap.de),
+  //  Format je Wegpunkt: [Längengrad, Breitengrad]
+  // ==========================================================
+  const start = {
+    nr: 1, name: "Frauenkirche", lat: 51.05190, lng: 13.74155,
+    info: "Barocke Kirche am Neumarkt, 1945 zerstört und bis 2005 wieder aufgebaut. Die Kuppel ist begehbar und bietet einen Blick über die Altstadt. Hier beginnt jeder Tag."
+  };
+
+  // Fügt Wegabschnitte zusammen (doppelte Übergangspunkte werden entfernt)
+  const verbinden = (...teile) => teile.reduce((alle, t) => alle.concat(alle.length ? t.slice(1) : t), []);
+
+  const tage = [
+    {
+      tag: 1, farbe: "#1a56db", farbname: "blau", titel: "Altstadt",
+      stationen: [
+        { nr: 2, name: "Zwinger", lat: 51.05305, lng: 13.73370,
+          info: "Barocker Festplatz mit Gemäldegalerie Alte Meister, Porzellansammlung und Mathematisch-Physikalischem Salon. Der Innenhof ist frei zugänglich." },
+        { nr: 3, name: "Semperoper", lat: 51.05430, lng: 13.73560,
+          info: "Opernhaus der Sächsischen Staatsoper am Theaterplatz, gebaut nach Plänen von Gottfried Semper. Tagsüber gibt es Führungen durch das Haus." },
+        { nr: 4, name: "Katholische Hofkirche", lat: 51.05350, lng: 13.73720,
+          info: "Kathedrale des Bistums Dresden-Meißen. In der Gruft sind Wettiner Fürsten bestattet, dort liegt auch das Herz Augusts des Starken." },
+        { nr: 5, name: "Residenzschloss", lat: 51.05250, lng: 13.73680,
+          info: "Ehemaliger Sitz der sächsischen Kurfürsten und Könige mit Grünem Gewölbe, Rüstkammer und Türckischer Cammer. Für das Historische Grüne Gewölbe vorab ein Zeitticket buchen." },
+        { nr: 6, name: "Fürstenzug", lat: 51.05272, lng: 13.73930,
+          info: "Rund 102 Meter langes Wandbild aus etwa 23.000 Meißner Porzellanfliesen. Es zeigt den Reiterzug der sächsischen Herrscher." },
+        { nr: 7, name: "Kulturpalast", lat: 51.05110, lng: 13.73860,
+          info: "DDR-Bau von 1969, seit dem Umbau 2017 Konzertsaal der Dresdner Philharmonie. Im Haus sind auch die Zentralbibliothek und das Kabarett Herkuleskeule." },
+        { nr: 8, name: "Altmarkt", lat: 51.05030, lng: 13.73880,
+          info: "Ältester Platz der Stadt. Im Advent steht hier der Striezelmarkt, einer der ältesten Weihnachtsmärkte Deutschlands." },
+        { nr: 9, name: "Kreuzkirche", lat: 51.04970, lng: 13.73940,
+          info: "Heimat des Dresdner Kreuzchors. Vom Turm sieht man über den Altmarkt und die Altstadt." }
+      ],
+      weg: verbinden(
+        [[13.74155,51.05190],[13.741256,51.052053],[13.741177,51.052063],[13.741257,51.052271],[13.741103,51.052298],[13.740601,51.052401],[13.740382,51.052444],[13.739696,51.052545],[13.739575,51.052594],[13.738554,51.053007],[13.738346,51.053115],[13.738119,51.053242],[13.737855,51.053316],[13.73768,51.05329],[13.737367,51.053198],[13.737259,51.053173],[13.737149,51.053147],[13.737064,51.053139],[13.736735,51.053173],[13.736425,51.053202],[13.73628,51.053249],[13.736247,51.053264],[13.736223,51.053275],[13.736207,51.053283],[13.736181,51.053295],[13.736032,51.053363],[13.735877,51.0534],[13.735801,51.05342],[13.735771,51.053385],[13.735743,51.053359],[13.735591,51.053411],[13.73553,51.053447],[13.735431,51.053544],[13.735338,51.053636],[13.735269,51.053608],[13.735108,51.053538],[13.734903,51.053454],[13.734849,51.053431],[13.734491,51.053288],[13.734475,51.053281],[13.734394,51.05325],[13.734304,51.053214],[13.733766,51.052994],[13.733708,51.053053]],
+        [[13.733708,51.053053],[13.733766,51.052994],[13.735338,51.053636],[13.735101,51.053864],[13.735187,51.053898],[13.735044,51.05404],[13.73556,51.054151],[13.73568,51.054268],[13.735835,51.054419],[13.735995,51.054476],[13.736212,51.054422],[13.736867,51.054067],[13.736993,51.053812],[13.736933,51.053761],[13.736712,51.053647],[13.735594,51.052782],[13.735699,51.05272],[13.735729,51.052491],[13.735783,51.052376],[13.73589,51.052276],[13.736071,51.052398],[13.736701,51.052354],[13.736071,51.052398],[13.73589,51.052276],[13.735863,51.052213],[13.736406,51.05212],[13.73674,51.052028],[13.736774,51.051971],[13.737538,51.051849],[13.737674,51.052506],[13.737934,51.052984],[13.738174,51.052911],[13.738284,51.053042],[13.738498,51.052953],[13.738554,51.053007],[13.739289,51.05271]],
+        [[13.739289,51.05271],[13.739696,51.052545],[13.739731,51.052479],[13.738951,51.052315],[13.738898,51.052323],[13.739155,51.051787],[13.739067,51.051261],[13.738672,51.051313],[13.739199,51.051228],[13.739261,51.051148],[13.739054,51.050369],[13.739103,51.050362],[13.739122,51.050289],[13.739198,51.050272],[13.739105,51.049998],[13.739484,51.049947]]
+      )
+    },
+    {
+      tag: 2, farbe: "#16a34a", farbname: "grün", titel: "Elbe & Neustadt",
+      stationen: [
+        { nr: 10, name: "Brühlsche Terrasse", lat: 51.05330, lng: 13.74180,
+          info: "Die Promenade hoch über der Elbe, auch „Balkon Europas“ genannt. Von hier blickt man auf den Fluss und die Neustadt." },
+        { nr: 11, name: "Augustusbrücke", lat: 51.05550, lng: 13.73980,
+          info: "Brücke zwischen Altstadt und Neustadt. Von hier sieht man die bekannte Altstadt-Silhouette mit Hofkirche, Schloss und Semperoper." },
+        { nr: 12, name: "Goldener Reiter", lat: 51.05735, lng: 13.74170,
+          info: "Vergoldetes Reiterstandbild Augusts des Starken am Neustädter Markt. Von hier führt die Hauptstraße als Fußgängerzone Richtung Albertplatz." },
+        { nr: 13, name: "Dreikönigskirche", lat: 51.05940, lng: 13.74390,
+          info: "Barockkirche an der Hauptstraße. Der Turm ist besteigbar und bietet einen Blick über die Neustadt." },
+        { nr: 14, name: "Albertplatz", lat: 51.06360, lng: 13.74740,
+          info: "Runder Platz mit den beiden Brunnen „Stille Wasser“ und „Stürmische Wogen“. Hier trifft die Innere auf die Äußere Neustadt." },
+        { nr: 15, name: "Erich Kästner Museum", lat: 51.06310, lng: 13.74590,
+          info: "Kleines Museum in der Villa von Kästners Onkel am Albertplatz. Auf der Gartenmauer sitzt Kästner als Bronzefigur." },
+        { nr: 16, name: "Kunsthofpassage", lat: 51.06755, lng: 13.75440,
+          info: "Bunte Hinterhöfe in der Äußeren Neustadt zwischen Görlitzer und Alaunstraße. Im Hof der Elemente machen die Regenrinnen bei Regen Musik. Mit Cafés und kleinen Läden." },
+        { nr: 17, name: "Pfunds Molkerei", lat: 51.06500, lng: 13.75970,
+          info: "Milchladen mit handbemalten Fliesen von Villeroy & Boch aus dem Jahr 1892. Steht als „schönster Milchladen der Welt“ im Guinness-Buch." }
+      ],
+      weg: verbinden(
+        [[13.74155,51.05190],[13.741256,51.052053],[13.741177,51.052063],[13.741257,51.052271],[13.741305,51.053186],[13.74143,51.053179],[13.741444,51.053242],[13.741327,51.053252],[13.741353,51.053373],[13.741807,51.053335],[13.739816,51.053532],[13.739769,51.053436],[13.739264,51.053515],[13.739164,51.053587],[13.738547,51.053738],[13.738479,51.053888],[13.738701,51.054049],[13.739728,51.05552],[13.740612,51.056786],[13.740709,51.05676],[13.74085,51.056964],[13.741024,51.057081],[13.741107,51.05706],[13.741236,51.057218],[13.741456,51.057168],[13.741442,51.057237],[13.741575,51.05728],[13.741648,51.057397],[13.741717,51.057382],[13.7418,51.057422],[13.74136,51.057502],[13.741601,51.057852],[13.741495,51.057892],[13.741748,51.05815],[13.741803,51.058132],[13.741813,51.058257],[13.742914,51.059378],[13.743436,51.059154],[13.743763,51.059453]],
+        [[13.743763,51.059453],[13.744447,51.06014],[13.7439,51.060379],[13.74501,51.061503],[13.744924,51.061616],[13.745705,51.062449],[13.745929,51.062414],[13.746802,51.063363],[13.747417,51.063463],[13.747471,51.063585],[13.747417,51.063463],[13.747099,51.063383],[13.746618,51.063421],[13.746108,51.062892],[13.745901,51.063093],[13.746108,51.062892],[13.746618,51.063421],[13.746878,51.063357],[13.747417,51.063463],[13.747533,51.063721],[13.748315,51.063586],[13.75302,51.068277],[13.753914,51.068053],[13.754393,51.06777],[13.754296,51.067684],[13.754431,51.067599],[13.754623,51.067549],[13.753859,51.066366],[13.759121,51.06501],[13.759237,51.064687],[13.759782,51.064475],[13.759932,51.064699],[13.759653,51.064784]]
+      )
+    },
+    {
+      tag: 3, farbe: "#eab308", farbname: "gelb", titel: "Museen & Großer Garten",
+      stationen: [
+        { nr: 18, name: "Albertinum", lat: 51.05170, lng: 13.74500,
+          info: "Kunstmuseum mit der Galerie Neue Meister und der Skulpturensammlung, von der Romantik bis zur Gegenwart." },
+        { nr: 19, name: "Neue Synagoge", lat: 51.05080, lng: 13.74670,
+          info: "2001 eingeweiht, an der Stelle der 1938 zerstörten Semper-Synagoge. Der würfelförmige Bau ist leicht gedreht, damit er nach Osten ausgerichtet ist." },
+        { nr: 20, name: "Neues Rathaus", lat: 51.04690, lng: 13.74220,
+          info: "Rathaus mit rund 100 Meter hohem Turm, auf dem der vergoldete Rathausmann steht. Der Turm ist für Besucher geöffnet." },
+        { nr: 21, name: "Deutsches Hygiene-Museum", lat: 51.04440, lng: 13.74510,
+          info: "Museum über den Menschen und seinen Körper, bekannt für die Gläserne Frau. Mit eigenem Kindermuseum." },
+        { nr: 22, name: "Gläserne Manufaktur", lat: 51.04360, lng: 13.75700,
+          info: "Gläserner Bau von Volkswagen am Rand des Großen Gartens mit Ausstellung und Besucherzentrum. Öffnungszeiten vorher prüfen." },
+        { nr: 23, name: "Botanischer Garten", lat: 51.04470, lng: 13.76600,
+          info: "Botanischer Garten der TU Dresden mit Gewächshäusern und Freiland voller Pflanzen aus aller Welt." },
+        { nr: 24, name: "Palais im Großen Garten", lat: 51.03780, lng: 13.76280,
+          info: "Barockes Lustschloss mitten im Großen Garten, Dresdens größtem Park. In der Nähe fährt im Sommer die Parkeisenbahn." },
+        { nr: 25, name: "Zoo Dresden", lat: 51.03500, lng: 13.75310,
+          info: "Zoo am Südrand des Großen Gartens, 1861 gegründet und damit einer der ältesten Zoos Deutschlands." }
+      ],
+      weg: verbinden(
+        [[13.74155,51.05190],[13.741256,51.052053],[13.741177,51.052063],[13.741039,51.051705],[13.743838,51.051383],[13.743861,51.051426],[13.744506,51.051303],[13.744998,51.051701],[13.744924,51.051643],[13.74505,51.051524],[13.745296,51.051592],[13.74559,51.051582],[13.746214,51.051397],[13.74631,51.051311],[13.74664,51.051201],[13.746682,51.051258],[13.747309,51.051163],[13.747007,51.050962],[13.746836,51.050755],[13.746199,51.049982],[13.746408,51.04991],[13.74587,51.049373],[13.74558,51.048973],[13.745502,51.048837],[13.745635,51.048702],[13.74522,51.048398],[13.744364,51.047421],[13.743005,51.047897],[13.742913,51.047786],[13.742821,51.047821],[13.742461,51.047395],[13.741703,51.046839],[13.7416,51.046654],[13.741689,51.04662],[13.742295,51.046806],[13.741689,51.04662],[13.742067,51.046133],[13.742661,51.045919],[13.741885,51.045106],[13.743829,51.044348],[13.744161,51.044707],[13.74435,51.044636],[13.744388,51.044677],[13.744921,51.044481]],
+        [[13.744921,51.044481],[13.745476,51.045182],[13.745822,51.045047],[13.746093,51.045114],[13.746847,51.045873],[13.746731,51.045946],[13.747001,51.046278],[13.747338,51.046141],[13.74847,51.046378],[13.748568,51.046494],[13.750036,51.045987],[13.750146,51.046194],[13.750495,51.046074],[13.751299,51.047017],[13.754896,51.045786],[13.755203,51.045978],[13.756524,51.045569],[13.756441,51.045478],[13.758272,51.044753],[13.75821,51.044683],[13.758586,51.044544],[13.75744,51.043422],[13.758421,51.044381],[13.758887,51.044321],[13.758958,51.044394],[13.76054,51.043847],[13.76085,51.044176],[13.764039,51.042888],[13.764805,51.043647],[13.765075,51.043539],[13.766156,51.044648],[13.765075,51.043539],[13.765349,51.04343],[13.765242,51.043326],[13.765117,51.043372],[13.764738,51.042993],[13.765226,51.042787],[13.76497,51.042516],[13.766346,51.041978],[13.766305,51.041559],[13.76647,51.041488],[13.763249,51.038247],[13.762927,51.038227],[13.762612,51.037983],[13.762385,51.037747],[13.762647,51.037644],[13.762887,51.037551],[13.762476,51.037459],[13.758637,51.033617],[13.756507,51.034747],[13.754975,51.035182],[13.754524,51.034705],[13.753227,51.034977]]
+      )
+    },
+    {
+      tag: 4, farbe: "#dc2626", farbname: "rot", titel: "Elbufer & Brücken",
+      stationen: [
+        { nr: 26, name: "Kronentor", lat: 51.05320, lng: 13.73230,
+          info: "Prächtiges Tor an der Westseite des Zwingers mit der vergoldeten polnischen Königskrone. Davor liegt der Zwingerteich." },
+        { nr: 27, name: "Yenidze", lat: 51.05740, lng: 13.72740,
+          info: "Ehemalige Zigarettenfabrik im Stil einer Moschee. Unter der Glaskuppel gibt es ein Restaurant mit Blick über die Stadt." },
+        { nr: 28, name: "Marienbrücke", lat: 51.05922, lng: 13.73050,
+          info: "Elbbrücke im Westen der Altstadt. Von hier sieht man flussaufwärts auf die Altstadt-Silhouette." },
+        { nr: 29, name: "Japanisches Palais", lat: 51.06100, lng: 13.73680,
+          info: "Barockes Palais am Neustädter Elbufer mit Museen und Innenhof. Vom Palaisgarten sieht man die Altstadt über der Elbe." },
+        { nr: 30, name: "Königsufer", lat: 51.05710, lng: 13.73850,
+          info: "Elbwiesen am Neustädter Ufer mit dem berühmten Canaletto-Blick auf die Altstadt. Im Sommer laufen hier die Filmnächte am Elbufer." },
+        { nr: 31, name: "Blockhaus", lat: 51.05670, lng: 13.74120,
+          info: "Barockbau am Neustädter Ende der Augustusbrücke. Heute sitzt hier das Archiv der Avantgarden." },
+        { nr: 32, name: "Sächsische Staatskanzlei", lat: 51.05843, lng: 13.74457,
+          info: "Sitz der sächsischen Landesregierung am Neustädter Elbufer, mit der Krone auf dem Turm gut von der Altstadt aus zu sehen." },
+        { nr: 33, name: "Rosengarten", lat: 51.05940, lng: 13.75360,
+          info: "Gartenanlage am Neustädter Elbufer mit Rosenbeeten und Blick über die Elbwiesen. Am schönsten im Juni." }
+      ],
+      weg: verbinden(
+        [[13.74155,51.05190],[13.741256,51.052053],[13.741257,51.052271],[13.739696,51.052545],[13.737855,51.053316],[13.737064,51.053139],[13.736425,51.053202],[13.735801,51.05342],[13.735743,51.053359],[13.734563,51.054268],[13.73282,51.053819],[13.732951,51.053368],[13.732534,51.053199],[13.732951,51.053368],[13.732745,51.053748],[13.732971,51.05381],[13.733766,51.052994],[13.732407,51.052456],[13.72839,51.056669],[13.727877,51.056718],[13.727319,51.057394],[13.726951,51.057194],[13.727455,51.057265],[13.727352,51.057383],[13.727455,51.057265],[13.726951,51.057194],[13.727319,51.057394],[13.727049,51.057687],[13.728544,51.058663],[13.728764,51.05921],[13.72917,51.059261],[13.72955,51.059656],[13.73024,51.059083],[13.730499,51.059217],[13.73024,51.059083],[13.72955,51.059656],[13.729099,51.059224],[13.729035,51.059473],[13.730431,51.060335],[13.734355,51.061586],[13.735162,51.061515],[13.736026,51.061509],[13.736431,51.061163],[13.736486,51.060943],[13.736794,51.060951]],
+        [[13.736794,51.060951],[13.737059,51.060906],[13.737325,51.060783],[13.737586,51.060328],[13.738105,51.06047],[13.738462,51.059736],[13.737769,51.059497],[13.738053,51.059184],[13.737155,51.058433],[13.736995,51.058367],[13.737685,51.057866],[13.738204,51.057592],[13.737943,51.057405],[13.738456,51.057066],[13.738881,51.05685],[13.739615,51.056595],[13.741288,51.05625],[13.741461,51.0566],[13.741214,51.056647],[13.740709,51.05676],[13.74136,51.057502],[13.741601,51.057852],[13.741495,51.057892],[13.741748,51.05815],[13.741803,51.058132],[13.741813,51.058257],[13.742914,51.059378],[13.743436,51.059154],[13.744156,51.059845],[13.745137,51.059408],[13.745179,51.05836],[13.744572,51.058353],[13.744572,51.058425],[13.744572,51.058353],[13.745179,51.05836],[13.745137,51.059408],[13.744156,51.059845],[13.744447,51.06014],[13.745444,51.059702],[13.745591,51.059827],[13.745586,51.059909],[13.745687,51.059912],[13.745679,51.060008],[13.745944,51.060049],[13.74594,51.060097],[13.746313,51.060108],[13.746331,51.059879],[13.746577,51.059885],[13.746591,51.059689],[13.7478,51.059204],[13.748648,51.058518],[13.748771,51.05831],[13.749643,51.058736],[13.750076,51.058361],[13.750426,51.058481],[13.75069,51.058179],[13.750567,51.058136],[13.750622,51.058072],[13.752256,51.058637],[13.752542,51.05867],[13.752659,51.058932],[13.752841,51.058994],[13.752831,51.059133],[13.753095,51.059166],[13.75316,51.059091],[13.753698,51.059299]]
+      )
+    }
+  ];
+  // ==========================================================
+
+  const map = L.map("map", { zoomControl: false, zoomSnap: 0.5 }).setView([51.0526, 13.7378], 15);
+  L.control.zoom({ position: "bottomleft" }).addTo(map);
+  const istGelb = t => t.tag === 3;
+
+  // ---------- Kartenhintergründe (ohne API-Schlüssel) ----------
+  const ESRI = n => "https://server.arcgisonline.com/ArcGIS/rest/services/" + n + "/MapServer/tile/{z}/{y}/{x}";
+  const tile = (url, nativeMax, attr) =>
+    L.tileLayer(url, { maxZoom: 20, maxNativeZoom: nativeMax, attribution: attr });
+  const A_ESRI = "Karte &copy; Esri, HERE, Garmin, &copy; OpenStreetMap";
+  const A_SAT  = "Bilder &copy; Esri, Maxar, Earthstar Geographics";
+  const hintergruende = [
+    { id: "stadtplan", name: "Stadtplan", farbe: "#f3ecd8",
+      ebenen: () => [tile(ESRI("World_Street_Map"), 19, A_ESRI)] },
+    { id: "satellit", name: "Satellit", farbe: "#3d5a3a",
+      ebenen: () => [tile(ESRI("World_Imagery"), 19, A_SAT)] },
+    { id: "hybrid", name: "Satellit + Straßen", farbe: "#55704f",
+      ebenen: () => [tile(ESRI("World_Imagery"), 19, A_SAT),
+                     tile(ESRI("Reference/World_Transportation"), 19, ""),
+                     tile(ESRI("Reference/World_Boundaries_and_Places"), 19, "")] },
+    { id: "strassen", name: "Nur Straßen", farbe: "#e6e8eb",
+      ebenen: () => [tile(ESRI("Canvas/World_Light_Gray_Base"), 16, A_ESRI),
+                     tile(ESRI("Canvas/World_Light_Gray_Reference"), 16, "")] },
+    { id: "gelaende", name: "Gelände", farbe: "#d9d3b4",
+      ebenen: () => [tile(ESRI("World_Topo_Map"), 19, A_ESRI)] },
+    { id: "relief", name: "Nur Relief", farbe: "#c9c9c4",
+      ebenen: () => [tile(ESRI("World_Shaded_Relief"), 13, "Relief &copy; Esri")] }
+  ];
+  if (location.protocol === "https:" || location.protocol === "http:") {
+    hintergruende.splice(1, 0, { id: "osm", name: "OpenStreetMap", farbe: "#e9e4dc",
+      ebenen: () => [tile("https://tile.openstreetmap.org/{z}/{x}/{y}.png", 19,
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>')] });
+  }
+
+  const speichern = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  const laden = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+
+  let aktiveGruppe = null;
+  function hintergrundSetzen(id) {
+    const h = hintergruende.find(x => x.id === id) || hintergruende[0];
+    if (aktiveGruppe) map.removeLayer(aktiveGruppe);
+    aktiveGruppe = L.layerGroup(h.ebenen()).addTo(map);
+    speichern("dd-hintergrund", h.id);
+    document.querySelectorAll(".wahl button").forEach(b =>
+      b.setAttribute("aria-pressed", b.dataset.id === h.id ? "true" : "false"));
+  }
+  const wahl = document.getElementById("wahl");
+  hintergruende.forEach(h => {
+    const b = document.createElement("button");
+    b.type = "button"; b.dataset.id = h.id;
+    b.innerHTML = '<span class="vorschau" style="background:' + h.farbe + '"></span>' + h.name;
+    b.addEventListener("click", () => { hintergrundSetzen(h.id); wahlZu(); });
+    wahl.appendChild(b);
+  });
+  const panel = document.getElementById("panel");
+  const btnEbenen = document.getElementById("btnEbenen");
+  function wahlZu() { panel.hidden = true; btnEbenen.setAttribute("aria-expanded", "false"); }
+  btnEbenen.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    btnEbenen.setAttribute("aria-expanded", panel.hidden ? "false" : "true");
+  });
+  map.on("click", wahlZu);
+  hintergrundSetzen(laden("dd-hintergrund") || "stadtplan");
+
+  // ---------- Routen und Stationen ----------
+  const routenEbene = L.layerGroup().addTo(map);
+  const stationsEbene = L.layerGroup().addTo(map);
+
+  tage.forEach(t => {
+    t.latlngs = t.weg.map(([lng, lat]) => [lat, lng]);
+    t.meter = 0;
+    for (let i = 1; i < t.latlngs.length; i++) t.meter += map.distance(t.latlngs[i - 1], t.latlngs[i]);
+    t.minuten = Math.round(t.meter / 80);     // ca. 80 m pro Minute zu Fuß
+  });
+
+  const km = m => m < 1000 ? Math.round(m / 10) * 10 + " m" : (m / 1000).toFixed(1).replace(".", ",") + " km";
+
+  function popupHtml(p, t) {
+    const zeile = t
+      ? '<p class="tagzeile" style="color:' + (istGelb(t) ? "#a16207" : t.farbe) + '">Tag ' + t.tag + "</p>"
+      : '<p class="tagzeile">Start · alle Tage</p>';
+    return '<div class="popup">' + zeile + "<h3>" + p.nr + " · " + p.name + "</h3><p>" + p.info + "</p></div>";
+  }
+
+  function marker(p, html, groesse, t) {
+    return L.marker([p.lat, p.lng], {
+      icon: L.divIcon({ className: "", html, iconSize: [groesse, groesse], iconAnchor: [groesse / 2, groesse / 2], popupAnchor: [0, -groesse / 2 - 2] }),
+      title: p.name, zIndexOffset: t ? 0 : 500
+    }).bindPopup(popupHtml(p, t));
+  }
+
+  let auswahl = "alle";   // "alle" oder 1..4
+
+  function zeichnen() {
+    routenEbene.clearLayers();
+    stationsEbene.clearLayers();
+    const sichtbar = auswahl === "alle" ? tage : tage.filter(t => t.tag === auswahl);
+    const dick = auswahl === "alle" ? 5 : 6;
+
+    sichtbar.forEach(t => {
+      // weißer Rand, damit die Linie auch auf dem Satellitenbild gut sichtbar ist
+      L.polyline(t.latlngs, { color: "#fff", weight: dick + 4, opacity: 0.9, lineJoin: "round", lineCap: "round", interactive: false }).addTo(routenEbene);
+      const linie = L.polyline(t.latlngs, { color: t.farbe, weight: dick, opacity: 0.95, lineJoin: "round", lineCap: "round" }).addTo(routenEbene);
+      linie.on("click", e => { L.DomEvent.stop(e); tagWaehlen(t.tag); });
+
+      t.stationen.forEach(s => {
+        marker(s, '<div class="wp' + (istGelb(t) ? " dunkel" : "") + '" style="background:' + t.farbe + '">' + s.nr + "</div>", 32, t).addTo(stationsEbene);
+      });
+    });
+
+    // Frauenkirche: Farbe des Tages, bei "Alle" vierfarbig
+    const startHtml = auswahl === "alle"
+      ? '<div class="wp start alle"><span>' + start.nr + "</span></div>"
+      : '<div class="wp start' + (istGelb(sichtbar[0]) ? " dunkel" : "") + '" style="background:' + sichtbar[0].farbe + '">' + start.nr + "</div>";
+    marker(start, startHtml, 38, null).addTo(stationsEbene);
+
+    // Text oben
+    const txt = document.getElementById("routeText");
+    if (auswahl === "alle") {
+      txt.textContent = "Alle 4 Tage · " + (tage.reduce((n, t) => n + t.stationen.length, 0) + 1) + " Stationen · " +
+        km(tage.reduce((m, t) => m + t.meter, 0)) + " insgesamt";
+    } else {
+      const t = sichtbar[0];
+      const n = t.stationen;
+      txt.textContent = "Tag " + t.tag + " · " + t.titel + " · Stationen " + n[0].nr + "–" + n[n.length - 1].nr +
+        " · " + km(t.meter) + ", ca. " + (t.minuten < 60 ? t.minuten + " Min." : Math.floor(t.minuten / 60) + " Std. " + (t.minuten % 60) + " Min.") + " zu Fuß";
+    }
+    standortText();
+  }
+
+  function routeZeigen() {
+    const sichtbar = auswahl === "alle" ? tage : tage.filter(t => t.tag === auswahl);
+    const b = L.latLngBounds([]);
+    sichtbar.forEach(t => b.extend(L.latLngBounds(t.latlngs)));
+    const oben = document.querySelector(".leiste").offsetHeight + 24;
+    map.fitBounds(b, { paddingTopLeft: [40, oben], paddingBottomRight: [70, 40] });
+  }
+
+  // ---------- Tagesauswahl ----------
+  const tageEl = document.getElementById("tage");
+  const knoepfe = [{ wert: "alle", text: "Alle", farbe: "#1b2333" }]
+    .concat(tage.map(t => ({ wert: t.tag, text: "Tag " + t.tag, farbe: t.farbe })));
+  knoepfe.forEach(k => {
+    const b = document.createElement("button");
+    b.type = "button"; b.dataset.tag = k.wert;
+    b.style.setProperty("--c", k.farbe);
+    b.setAttribute("aria-label", k.wert === "alle" ? "Alle Routen" : "Tag " + k.wert + " (" + tage[k.wert - 1].farbname + ")");
+    b.innerHTML = '<span class="punkt' + (k.wert === "alle" ? " alle" : "") + '"' +
+      (k.wert === "alle" ? "" : ' style="background:' + k.farbe + '"') + "></span>" + k.text;
+    b.addEventListener("click", () => tagWaehlen(k.wert));
+    tageEl.appendChild(b);
+  });
+
+  function tagWaehlen(wert) {
+    auswahl = wert;
+    speichern("dd-tag", String(wert));
+    tageEl.querySelectorAll("button").forEach(b =>
+      b.setAttribute("aria-pressed", b.dataset.tag === String(wert) ? "true" : "false"));
+    map.closePopup();
+    zeichnen();
+    routeZeigen();
+  }
+
+  // ---------- Eigener Standort ----------
+  const statusEl = document.getElementById("status");
+  let ichMarker = null, ichKreis = null, ichPos = null, ichGenau = 0, standortFehlerText = null;
+
+  function standortText() {
+    if (standortFehlerText) { statusEl.textContent = standortFehlerText; return; }
+    if (!ichPos) return;
+    const kandidaten = (auswahl === "alle" ? tage : tage.filter(t => t.tag === auswahl))
+      .flatMap(t => t.stationen).concat([start]);
+    let naechste = null, d = Infinity;
+    kandidaten.forEach(s => {
+      const x = map.distance(ichPos, [s.lat, s.lng]);
+      if (x < d) { d = x; naechste = s; }
+    });
+    statusEl.textContent = "Standort aktiv (±" + Math.round(ichGenau) + " m) · nächste Station: " +
+      naechste.nr + " " + naechste.name + ", " + km(d);
+  }
+
+  function standortZeigen(pos) {
+    ichPos = [pos.coords.latitude, pos.coords.longitude];
+    ichGenau = pos.coords.accuracy;
+    standortFehlerText = null;
+    if (!ichMarker) {
+      ichKreis = L.circle(ichPos, { radius: ichGenau, color: "#0ea5e9", weight: 1, fillOpacity: 0.12, interactive: false }).addTo(map);
+      ichMarker = L.marker(ichPos, {
+        icon: L.divIcon({ className: "", html: '<div class="ich"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }),
+        zIndexOffset: 1000
+      }).addTo(map).bindPopup("Du bist hier");
+    } else {
+      ichMarker.setLatLng(ichPos);
+      ichKreis.setLatLng(ichPos).setRadius(ichGenau);
+    }
+    standortText();
+  }
+
+  function standortFehler(err) {
+    if (err.code === 1) standortFehlerText = "Standort nicht erlaubt. Bitte in den Browser-Einstellungen freigeben.";
+    else if (!window.isSecureContext) standortFehlerText = "Standort braucht eine HTTPS-Adresse.";
+    else standortFehlerText = "Standort gerade nicht verfügbar.";
+    standortText();
+  }
+
+  if ("geolocation" in navigator) {
+    navigator.geolocation.watchPosition(standortZeigen, standortFehler, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+  } else {
+    standortFehlerText = "Dieser Browser kann keinen Standort liefern.";
+  }
+
+  document.getElementById("btnIch").addEventListener("click", () => {
+    if (ichPos) map.setView(ichPos, 18);
+    else statusEl.textContent = "Noch kein Standort gefunden …";
+  });
+  document.getElementById("btnRoute").addEventListener("click", routeZeigen);
+
+  // ---------- Start ----------
+  const gespeicherterTag = laden("dd-tag");
+  tagWaehlen(gespeicherterTag && gespeicherterTag !== "alle" ? Number(gespeicherterTag) : "alle");
+</script>
+</body>
+</html>
